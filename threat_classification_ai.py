@@ -1,120 +1,53 @@
-# ============================================================
-# THREAT CLASSIFICATION AI MODEL
-# For Active Protection System Decision Support
-# Model: Neural Network Classifier
-# Inputs: Velocity, Distance, Angle
-# Output: LOW / MEDIUM / HIGH Threat
-# ============================================================
-
+import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
+st.set_page_config(
+    page_title="APS Threat Classification AI",
+    page_icon="🛡️",
+    layout="wide"
+)
 
-# ------------------------------------------------------------
-# 1. RULE-BASED LABEL GENERATION
-# ------------------------------------------------------------
+st.title("🛡️ APS Threat Classification AI Model")
+st.write("This AI model classifies an incoming threat as LOW, MEDIUM, or HIGH based on velocity, distance, and approach angle.")
 
-def classify_threat_rule(velocity, distance, angle):
-    """
-    Creates threat labels based on simplified APS logic.
-
-    velocity : incoming threat velocity in m/s
-    distance : distance from vehicle in m
-    angle    : approach angle in degrees
-
-    Output:
-    0 = LOW threat
-    1 = MEDIUM threat
-    2 = HIGH threat
-    """
-
-    # Time-to-impact approximation
+def classify_rule(velocity, distance, angle):
     if velocity <= 0:
         tti = 999
     else:
         tti = distance / velocity
 
-    # Normalize angle severity
-    # Direct/frontal or steep top-attack angles may be more critical
-    angle_risk = 0
-
-    if angle >= 60:
-        angle_risk = 2
-    elif angle >= 30:
-        angle_risk = 1
+    if velocity > 1200 or tti < 0.05 or angle >= 60:
+        return 2
+    elif velocity > 500 or tti < 0.15 or angle >= 30:
+        return 1
     else:
-        angle_risk = 0
+        return 0
 
-    # Threat classification logic
-    if velocity > 1200 or tti < 0.05 or angle_risk == 2:
-        return 2  # HIGH
-
-    elif velocity > 500 or tti < 0.15 or angle_risk == 1:
-        return 1  # MEDIUM
-
-    else:
-        return 0  # LOW
-
-
-# ------------------------------------------------------------
-# 2. SYNTHETIC DATASET GENERATION
-# ------------------------------------------------------------
-
-def generate_dataset(samples=2000):
-    """
-    Generates synthetic APS threat data.
-    This is used because real threat data is restricted/unavailable.
-    """
-
+@st.cache_resource
+def train_model():
     data = []
+    for _ in range(3000):
+        velocity = np.random.uniform(100, 1800)
+        distance = np.random.uniform(20, 500)
+        angle = np.random.uniform(0, 90)
+        label = classify_rule(velocity, distance, angle)
+        data.append([velocity, distance, angle, label])
 
-    for _ in range(samples):
-        velocity = np.random.uniform(100, 1800)     # m/s
-        distance = np.random.uniform(20, 500)       # meters
-        angle = np.random.uniform(0, 90)            # degrees
+    df = pd.DataFrame(data, columns=["Velocity", "Distance", "Angle", "Threat_Class"])
 
-        threat_class = classify_threat_rule(velocity, distance, angle)
-
-        data.append([velocity, distance, angle, threat_class])
-
-    df = pd.DataFrame(
-        data,
-        columns=["Velocity_mps", "Distance_m", "Angle_deg", "Threat_Class"]
-    )
-
-    return df
-
-
-# ------------------------------------------------------------
-# 3. TRAIN NEURAL NETWORK MODEL
-# ------------------------------------------------------------
-
-def train_model(df):
-    """
-    Trains a Neural Network classifier.
-    """
-
-    X = df[["Velocity_mps", "Distance_m", "Angle_deg"]]
+    X = df[["Velocity", "Distance", "Angle"]]
     y = df["Threat_Class"]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.25,
-        random_state=42,
-        stratify=y
+        X, y, test_size=0.25, random_state=42, stratify=y
     )
 
     scaler = StandardScaler()
-
     X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
 
     model = MLPClassifier(
         hidden_layer_sizes=(32, 16),
@@ -126,165 +59,92 @@ def train_model(df):
 
     model.fit(X_train_scaled, y_train)
 
-    y_pred = model.predict(X_test_scaled)
+    return model, scaler, df
 
-    print("\n================ MODEL PERFORMANCE ================\n")
-    print("Accuracy:", round(accuracy_score(y_test, y_pred) * 100, 2), "%")
+model, scaler, df = train_model()
 
-    print("\nClassification Report:")
-    print(classification_report(
-        y_test,
-        y_pred,
-        target_names=["LOW", "MEDIUM", "HIGH"]
-    ))
+st.sidebar.header("Input Threat Parameters")
 
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
+velocity = st.sidebar.slider("Threat Velocity (m/s)", 100, 1800, 900)
+distance = st.sidebar.slider("Distance from Vehicle (m)", 20, 500, 120)
+angle = st.sidebar.slider("Approach Angle (degrees)", 0, 90, 45)
 
-    return model, scaler
+input_data = pd.DataFrame([[velocity, distance, angle]], columns=["Velocity", "Distance", "Angle"])
+input_scaled = scaler.transform(input_data)
 
+prediction = model.predict(input_scaled)[0]
+probability = model.predict_proba(input_scaled)[0]
 
-# ------------------------------------------------------------
-# 4. PREDICTION FUNCTION
-# ------------------------------------------------------------
+labels = {
+    0: "LOW THREAT",
+    1: "MEDIUM THREAT",
+    2: "HIGH THREAT"
+}
 
-def predict_threat(model, scaler, velocity, distance, angle):
-    """
-    Predicts threat level using trained neural network.
-    """
+col1, col2, col3 = st.columns(3)
 
-    input_data = pd.DataFrame(
-        [[velocity, distance, angle]],
-        columns=["Velocity_mps", "Distance_m", "Angle_deg"]
-    )
+with col1:
+    st.metric("Velocity", f"{velocity} m/s")
 
-    input_scaled = scaler.transform(input_data)
+with col2:
+    st.metric("Distance", f"{distance} m")
 
-    prediction = model.predict(input_scaled)[0]
-    probability = model.predict_proba(input_scaled)[0]
+with col3:
+    st.metric("Angle", f"{angle}°")
 
-    threat_names = {
-        0: "LOW THREAT",
-        1: "MEDIUM THREAT",
-        2: "HIGH THREAT"
-    }
+st.markdown("## Prediction Result")
 
-    print("\n================ THREAT CLASSIFICATION RESULT ================\n")
-    print(f"Input Velocity : {velocity:.2f} m/s")
-    print(f"Input Distance : {distance:.2f} m")
-    print(f"Input Angle    : {angle:.2f} degrees")
+if prediction == 2:
+    st.error(f"🔴 {labels[prediction]}")
+elif prediction == 1:
+    st.warning(f"🟡 {labels[prediction]}")
+else:
+    st.success(f"🟢 {labels[prediction]}")
 
-    print("\nPredicted Threat Level:", threat_names[prediction])
+st.markdown("## Confidence Score")
 
-    print("\nPrediction Confidence:")
-    print(f"LOW    : {probability[0] * 100:.2f}%")
-    print(f"MEDIUM : {probability[1] * 100:.2f}%")
-    print(f"HIGH   : {probability[2] * 100:.2f}%")
+confidence_df = pd.DataFrame({
+    "Threat Level": ["LOW", "MEDIUM", "HIGH"],
+    "Confidence (%)": [
+        probability[0] * 100,
+        probability[1] * 100,
+        probability[2] * 100
+    ]
+})
 
-    return prediction, probability
+st.bar_chart(confidence_df.set_index("Threat Level"))
 
+st.markdown("## Technical Decision Parameters")
 
-# ------------------------------------------------------------
-# 5. GRAPH GENERATION FOR THESIS
-# ------------------------------------------------------------
+tti = distance / velocity
 
-def plot_results(df):
-    """
-    Creates plots that can be used in thesis/PPT.
-    """
+result_table = pd.DataFrame({
+    "Parameter": [
+        "Threat Velocity",
+        "Distance from Vehicle",
+        "Approach Angle",
+        "Estimated Time-to-Impact",
+        "Predicted Threat Class"
+    ],
+    "Value": [
+        f"{velocity} m/s",
+        f"{distance} m",
+        f"{angle} degrees",
+        f"{tti:.4f} seconds",
+        labels[prediction]
+    ]
+})
 
-    threat_labels = {
-        0: "LOW",
-        1: "MEDIUM",
-        2: "HIGH"
-    }
+st.table(result_table)
 
-    df["Threat_Label"] = df["Threat_Class"].map(threat_labels)
+st.markdown("## Dataset Preview Used for AI Training")
+st.dataframe(df.head(20))
 
-    # Plot 1: Threat class distribution
-    plt.figure(figsize=(7, 5))
-    df["Threat_Label"].value_counts().reindex(["LOW", "MEDIUM", "HIGH"]).plot(kind="bar")
-    plt.xlabel("Threat Class")
-    plt.ylabel("Number of Samples")
-    plt.title("Threat Class Distribution")
-    plt.grid(axis="y")
-    plt.tight_layout()
-    plt.savefig("threat_class_distribution.png", dpi=300)
-    plt.show()
-
-    # Plot 2: Velocity vs Distance
-    plt.figure(figsize=(8, 5))
-    for class_id, label in threat_labels.items():
-        subset = df[df["Threat_Class"] == class_id]
-        plt.scatter(
-            subset["Distance_m"],
-            subset["Velocity_mps"],
-            label=label,
-            alpha=0.5
-        )
-
-    plt.xlabel("Distance (m)")
-    plt.ylabel("Velocity (m/s)")
-    plt.title("Threat Classification Based on Velocity and Distance")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig("velocity_distance_threat_map.png", dpi=300)
-    plt.show()
-
-    # Plot 3: Angle vs Velocity
-    plt.figure(figsize=(8, 5))
-    for class_id, label in threat_labels.items():
-        subset = df[df["Threat_Class"] == class_id]
-        plt.scatter(
-            subset["Angle_deg"],
-            subset["Velocity_mps"],
-            label=label,
-            alpha=0.5
-        )
-
-    plt.xlabel("Angle of Approach (deg)")
-    plt.ylabel("Velocity (m/s)")
-    plt.title("Threat Classification Based on Angle and Velocity")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig("angle_velocity_threat_map.png", dpi=300)
-    plt.show()
-
-
-# ------------------------------------------------------------
-# 6. MAIN PROGRAM
-# ------------------------------------------------------------
-
-if __name__ == "__main__":
-
-    print("\nGenerating synthetic APS threat dataset...")
-    df = generate_dataset(samples=3000)
-
-    print("\nFirst five rows of dataset:")
-    print(df.head())
-
-    df.to_csv("aps_threat_classification_dataset.csv", index=False)
-    print("\nDataset saved as: aps_threat_classification_dataset.csv")
-
-    model, scaler = train_model(df)
-
-    plot_results(df)
-
-    # --------------------------------------------------------
-    # Example Prediction
-    # Change these values during presentation/demo
-    # --------------------------------------------------------
-
-    example_velocity = 1400   # m/s
-    example_distance = 80     # m
-    example_angle = 65        # degrees
-
-    predict_threat(
-        model,
-        scaler,
-        example_velocity,
-        example_distance,
-        example_angle
-    )
+st.markdown("## Thesis Explanation")
+st.write("""
+The developed AI model acts as a decision-support layer for an Active Protection System.
+It classifies incoming threats based on velocity, distance, and angle of approach.
+A synthetic dataset is generated using APS-based decision logic, and a neural network
+classifier is trained to predict whether the threat level is LOW, MEDIUM, or HIGH.
+This supports fast threat prioritization before interceptor launch.
+""")
